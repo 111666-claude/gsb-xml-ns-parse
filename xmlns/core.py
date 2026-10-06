@@ -20,34 +20,38 @@ class Elem:
 class Doc:
     def __init__(self):
         self.elems = []
+        self._index = {}
+
+    def add(self, ns, local, attrs):
+        elem = Elem(ns, local, attrs)
+        self.elems.append(elem)
+        self._index.setdefault((ns, local), []).append(elem)
 
     def find(self, ns, local, counter):
-        out = []
-        for elem in self.elems:
-            counter.scanned += 1
-            if elem.ns == ns and elem.local == local:
-                out.append(elem)
-        return out
+        bucket = self._index.get((ns, local), ())
+        counter.scanned += len(bucket)
+        return list(bucket)
 
 
 def parse(raw, counter):
     doc = Doc()
     parser = expat.ParserCreate()
-    ns = {}
-    default = [""]
+    scopes = [{"": ""}]
 
     def start(name, attrs):
         counter.scanned += 1
+        ns = dict(scopes[-1])
         for key, value in attrs.items():
             if key == "xmlns":
-                default[0] = value
+                ns[""] = value
             elif key.startswith("xmlns:"):
                 ns[key[6:]] = value
+        scopes.append(ns)
         if ":" in name:
             prefix, local = name.split(":", 1)
             uri = ns.get(prefix, "")
         else:
-            uri = ""
+            uri = ns.get("", "")
             local = name
         out_attrs = []
         for key, value in attrs.items():
@@ -58,10 +62,14 @@ def parse(raw, counter):
                 attr_ns = ns.get(prefix, "")
             else:
                 local_attr = key
-                attr_ns = default[0]
+                attr_ns = ""
             out_attrs.append((attr_ns, local_attr, value))
-        doc.elems.append(Elem(uri, local, out_attrs))
+        doc.add(uri, local, out_attrs)
+
+    def end(name):
+        scopes.pop()
 
     parser.StartElementHandler = start
+    parser.EndElementHandler = end
     parser.Parse(raw.encode("utf-8"))
     return doc
