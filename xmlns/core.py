@@ -20,34 +20,40 @@ class Elem:
 class Doc:
     def __init__(self):
         self.elems = []
+        self._index = None
+
+    def _build_index(self):
+        self._index = {}
+        for elem in self.elems:
+            self._index.setdefault((elem.ns, elem.local), []).append(elem)
 
     def find(self, ns, local, counter):
-        out = []
-        for elem in self.elems:
-            counter.scanned += 1
-            if elem.ns == ns and elem.local == local:
-                out.append(elem)
-        return out
+        if self._index is None:
+            self._build_index()
+        counter.scanned += 1
+        return list(self._index.get((ns, local), []))
 
 
 def parse(raw, counter):
     doc = Doc()
     parser = expat.ParserCreate()
-    ns = {}
-    default = [""]
+    scopes = [({}, "")]
 
     def start(name, attrs):
         counter.scanned += 1
+        bindings, default = scopes[-1]
+        bindings = dict(bindings)
         for key, value in attrs.items():
             if key == "xmlns":
-                default[0] = value
+                default = value
             elif key.startswith("xmlns:"):
-                ns[key[6:]] = value
+                bindings[key[6:]] = value
+        scopes.append((bindings, default))
         if ":" in name:
             prefix, local = name.split(":", 1)
-            uri = ns.get(prefix, "")
+            uri = bindings.get(prefix, "")
         else:
-            uri = ""
+            uri = default
             local = name
         out_attrs = []
         for key, value in attrs.items():
@@ -55,13 +61,17 @@ def parse(raw, counter):
                 continue
             if ":" in key:
                 prefix, local_attr = key.split(":", 1)
-                attr_ns = ns.get(prefix, "")
+                attr_ns = bindings.get(prefix, "")
             else:
                 local_attr = key
-                attr_ns = default[0]
+                attr_ns = ""
             out_attrs.append((attr_ns, local_attr, value))
         doc.elems.append(Elem(uri, local, out_attrs))
 
+    def end(name):
+        scopes.pop()
+
     parser.StartElementHandler = start
+    parser.EndElementHandler = end
     parser.Parse(raw.encode("utf-8"))
     return doc
